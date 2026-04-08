@@ -2,7 +2,7 @@ import gradio as gr
 import time
 import json
 
-# Budget 2026 Task Data (Current Standards)
+# Budget 2026 Task Data - Indian Statutory Standards
 task_data = {
     "Task 1: EASY (New Regime 2026)": {
         "income": 850000,
@@ -20,7 +20,7 @@ task_data = {
         "income": 5500000,
         "std_deduction": 100000,
         "regime": "New Tax Regime",
-        "context": "High-income filing with 2026 Surcharge & Audit Scrutiny."
+        "context": "High-income filing with 2026 Surcharge and Audit Scrutiny."
     }
 }
 
@@ -46,7 +46,7 @@ def run_evaluation(task_name):
 
     # Step 1: Standard Deduction (Budget 2026 Update)
     current_state["taxable_income"] -= current_state["std_deduction"]
-    history.append({"role": "assistant", "content": f"Action: apply_std_deduction()\nResult: Applied increased Standard Deduction of ₹1,00,000 as per Budget 2026."})
+    history.append({"role": "assistant", "content": f"Action: apply_std_deduction()\nResult: Applied increased Standard Deduction of 1,00,000 INR as per Budget 2026."})
     total_reward += 0.3
     yield history, total_reward, 0.3, current_state
     time.sleep(1)
@@ -62,12 +62,13 @@ def run_evaluation(task_name):
     time.sleep(1)
 
     # Step 3: Final Filing
-    history.append({"role": "assistant", "content": "Action: validate_itd_schema()\nResult: JSON output matches 2026 ITD requirements. Submitting return."})
+    history.append({"role": "assistant", "content": "Action: validate_itd_schema()\nResult: JSON output matches 2026 ITD requirements. Submitting return to environment grader."})
     total_reward += 0.4
     history.append({"role": "assistant", "content": "Status: Task Complete\nFinal Grader Score: 1.0\nOutcome: Budget 2026 Compliance Confirmed."})
     yield history, total_reward, 0.4, current_state
 
-css = """
+# Custom CSS for the Chic Glass effect
+css_styles = """
 .gradio-container { background-color: #0d1117 !important; }
 .glass-panel { 
     background: rgba(255, 255, 255, 0.02) !important; 
@@ -78,9 +79,11 @@ css = """
 }
 """
 
-with gr.Blocks(theme=gr.themes.Glass(), css=css) as demo:
+# GRADIO 6 FIX: Removed theme and css from Blocks constructor
+with gr.Blocks() as demo:
     with gr.Column(elem_classes="glass-panel"):
         gr.Markdown("# Tax Agent OpenEnv: Budget 2026 Edition")
+        gr.Markdown("Autonomous agent evaluation framework for Indian statutory compliance.")
         
         with gr.Row():
             with gr.Column(scale=3):
@@ -91,7 +94,8 @@ with gr.Blocks(theme=gr.themes.Glass(), css=css) as demo:
                 step_reward_display = gr.Number(label="Step Signal", value=0.0, interactive=False)
 
         with gr.Row():
-            chatbot = gr.Chatbot(label="Agent Workflow Logs", height=450, type="messages")
+            # GRADIO 6 FIX: Removed type="messages"
+            chatbot = gr.Chatbot(label="Agent Workflow Logs", height=450)
             state_viewer = gr.JSON(label="System State (Budget 2026 Framework)")
 
     run_btn.click(
@@ -101,4 +105,10 @@ with gr.Blocks(theme=gr.themes.Glass(), css=css) as demo:
     )
 
 if __name__ == "__main__":
-    demo.launch(server_name="0.0.0.0", server_port=7860)
+    # GRADIO 6 FIX: Parameters moved to launch()
+    demo.launch(
+        server_name="0.0.0.0", 
+        server_port=7860, 
+        theme=gr.themes.Glass(), 
+        css=css_styles
+    )
