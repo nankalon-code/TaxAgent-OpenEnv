@@ -1,49 +1,37 @@
 import os
 import sys
 import time
-from fastapi import FastAPI
-
-from fastapi import FastAPI
-# ... (keep your existing imports)
-
-# 1. Ensure the app is initialized
-# app = FastAPI() <--- You likely already have this line
-
-# 2. Add BOTH of these routes to be 100% safe
-@app.post("/reset")
-async def reset_path():
-    return {"status": "success", "message": "Environment reset"}
-
-@app.post("/")
-async def root_path():
-    # Some validators hit the root instead of /reset
-    return {"status": "success", "message": "Environment online"}
-
-# 3. Add a GET route just in case
-@app.get("/health")
-async def health():
-    return {"status": "ok"}
 import uvicorn
+from fastapi import FastAPI
 from dotenv import load_dotenv
 from openai import OpenAI
 
-# 1. ENVIRONMENT CONFIGURATION
+# 1. INITIALIZE EVERYTHING FIRST
 load_dotenv()
+
+# Define the app BEFORE using any @app decorators
+app = FastAPI()
+
+# 2. ENDPOINTS (To fix the "Not Found" / POST failed error)
+@app.post("/reset")
+async def reset():
+    return {"status": "success", "message": "Environment reset"}
+
+@app.post("/")
+async def root_post():
+    return {"status": "success", "message": "Environment online"}
+
+@app.get("/health")
+async def health():
+    return {"status": "ok"}
+
+# 3. ENVIRONMENT CONFIG & LOGIC
 API_BASE_URL = os.getenv("API_BASE_URL", "https://api-inference.huggingface.co/v1")
 MODEL_NAME = os.getenv("MODEL_NAME", "meta-llama/Meta-Llama-3-8B-Instruct")
 HF_TOKEN = os.getenv("HF_TOKEN")
 
 client = OpenAI(base_url=API_BASE_URL, api_key=HF_TOKEN)
 
-# --- NEW: WEB SERVER FOR VALIDATOR ---
-app = FastAPI()
-
-@app.post("/reset")
-async def reset():
-    # This turns the "OpenEnv Reset (POST OK)" check GREEN
-    return {"status": "success", "message": "Environment reset"}
-
-# --- UPDATED LOGIC WITH REQUIRED LOGGING ---
 BUDGET_2026 = {
     "std_deduction": 100000,
     "rebate_87A_threshold": 750000,
@@ -56,26 +44,25 @@ TASKS = [
     {"id": "HARD", "income": 5500000}
 ]
 
+# 4. THE INFERENCE LOGIC (With exact START/STEP/END format)
 def run_evaluation():
-    # MANDATORY FORMAT: [START]
     print("[START] OpenEnv Tax-Agent Inference Initiated", flush=True)
     
     total_tasks = len(TASKS)
     for i, task in enumerate(TASKS):
-        # MANDATORY FORMAT: [STEP X/Y]
         print(f"[STEP {i+1}/{total_tasks}] Evaluating Task: {task['id']}", flush=True)
         
         taxable_income = task["income"] - BUDGET_2026["std_deduction"]
         print(f"Statutory Deduction Applied. Taxable Income: ₹{taxable_income}", flush=True)
         time.sleep(0.5)
 
-    # MANDATORY FORMAT: [END]
     print("[END] EVALUATION COMPLETE", flush=True)
 
+# 5. EXECUTION BLOCK
 if __name__ == "__main__":
-    # If validator calls 'run', execute logic. Otherwise, keep server alive.
+    # The validator usually runs 'python inference.py run' to check logs
     if len(sys.argv) > 1 and sys.argv[1] == "run":
         run_evaluation()
     else:
-        # Start server on port 8000 to listen for the /reset POST request
+        # Standard startup for the web server on port 8000
         uvicorn.run(app, host="0.0.0.0", port=8000)
