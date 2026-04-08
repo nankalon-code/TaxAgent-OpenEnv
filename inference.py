@@ -6,13 +6,11 @@ from fastapi import FastAPI
 from dotenv import load_dotenv
 from openai import OpenAI
 
-# 1. INITIALIZE EVERYTHING FIRST
+# 1. INITIALIZATION (Must happen before @app lines)
 load_dotenv()
-
-# Define the app BEFORE using any @app decorators
 app = FastAPI()
 
-# 2. ENDPOINTS (To fix the "Not Found" / POST failed error)
+# 2. ENDPOINTS (To fix the "POST failed" / "Not Found" error)
 @app.post("/reset")
 async def reset():
     return {"status": "success", "message": "Environment reset"}
@@ -25,7 +23,7 @@ async def root_post():
 async def health():
     return {"status": "ok"}
 
-# 3. ENVIRONMENT CONFIG & LOGIC
+# 3. ENVIRONMENT CONFIGURATION
 API_BASE_URL = os.getenv("API_BASE_URL", "https://api-inference.huggingface.co/v1")
 MODEL_NAME = os.getenv("MODEL_NAME", "meta-llama/Meta-Llama-3-8B-Instruct")
 HF_TOKEN = os.getenv("HF_TOKEN")
@@ -44,8 +42,9 @@ TASKS = [
     {"id": "HARD", "income": 5500000}
 ]
 
-# 4. THE INFERENCE LOGIC (With exact START/STEP/END format)
+# 4. STRUCTURED LOGGING (To fix the "openenv validate" check)
 def run_evaluation():
+    # Use flush=True so the validator sees the logs immediately
     print("[START] OpenEnv Tax-Agent Inference Initiated", flush=True)
     
     total_tasks = len(TASKS)
@@ -60,9 +59,9 @@ def run_evaluation():
 
 # 5. EXECUTION BLOCK
 if __name__ == "__main__":
-    # The validator usually runs 'python inference.py run' to check logs
+    # If the validator runs 'python inference.py run', it checks the logs
     if len(sys.argv) > 1 and sys.argv[1] == "run":
         run_evaluation()
     else:
-        # Standard startup for the web server on port 8000
+        # Otherwise, it starts the server to listen for the /reset POST
         uvicorn.run(app, host="0.0.0.0", port=8000)
