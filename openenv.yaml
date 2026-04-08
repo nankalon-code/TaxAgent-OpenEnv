@@ -1,0 +1,6 @@
+name: "Tax-Agent-Environment"
+version: "1.0.0"
+description: "A real-world tax preparation and filing environment simulating data entry, deduction application, and liability calculation."
+tags:
+  - openenv
+  - finance
