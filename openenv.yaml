@@ -1,6 +1,35 @@
-name: "Tax-Agent-Environment"
 version: "1.0.0"
-description: "A real-world tax preparation and filing environment simulating data entry, deduction application, and liability calculation."
-tags:
-  - openenv
-  - finance
+env_id: "tax-agent-v1"
+description: "Simulated tax filing environment for evaluating autonomous financial agents."
+
+# Documentation of the Agent's possible moves
+action_space:
+  type: "Discrete"
+  actions:
+    - name: "classify_income"
+      description: "Identifies income types (Salary, Business, Capital Gains)."
+    - name: "apply_deduction"
+      description: "Calculates and applies statutory tax deductions (Sec 80C/80D)."
+    - name: "detect_audit_risk"
+      description: "Performs variance analysis on historical tax data."
+    - name: "submit_filing"
+      description: "Terminal action that triggers the environment grader."
+
+# Documentation of what the Agent sees
+observation_space:
+  type: "Dict"
+  parameters:
+    taxable_income: "Integer representing current net income."
+    audit_flag: "Boolean indicating if FY records require amendment."
+    current_step: "Integer tracking the trajectory progress."
+
+tasks:
+  - id: "ITR1_BASIC"
+    difficulty: "Easy"
+    reward_range: [0, 1.0]
+  - id: "ITR2_OPTIMIZED"
+    difficulty: "Medium"
+    reward_range: [0, 1.0]
+  - id: "AUDIT_RECOVERY"
+    difficulty: "Hard"
+    reward_range: [0, 1.0]
