@@ -3,3 +3,5 @@ pydantic
 python-dotenv
 gradio
 pandas
+fastapi
+uvicorn
