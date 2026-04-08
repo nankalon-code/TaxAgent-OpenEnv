@@ -156,7 +156,7 @@ with gr.Blocks(title="Tax Agent OpenEnv Interactive Evaluation") as demo:
 
     with gr.Row():
         # Task Selection and Primary Metrics
-        task_dropdown = gr.Dropdown(choices=task_options, label="Select Tax Task", index=0)
+  task_dropdown = gr.Dropdown(choices=task_options, label="Select Tax Task", value=task_options[0])
         total_reward_display = gr.Number(label="Total Cumulative Reward", value=0.0, interactive=False)
         current_reward_display = gr.Number(label="Incremental Step Reward", value=0.0, interactive=False)
 
