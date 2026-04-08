@@ -74,6 +74,15 @@ The standalone baseline evaluation was performed using meta-llama/Meta-Llama-3-8
 | Total Baseline | - | [TOTAL BASELINE REWARD] | - | - |
 
 ---
+## System Architecture
+
+The TaxAgent environment is built on the **OpenEnv Finite State Machine (FSM)** architecture. 
+
+1. **State Management**: Unlike a simple chatbot, this environment maintains a persistent JSON state (`TaxState`). Every action from the agent transitions the state, which is then reflected in the Observation Space.
+2. **Reward Function**: The environment utilizes a shaped reward function.
+   - **Step Reward ($r_t$):** Provided for valid transitions (e.g., successful income classification).
+   - **Termination Reward ($R$):** The final Grader Score (0.0–1.0) based on the accuracy of the final tax liability calculation.
+3. **Deterministic Grader**: The final submission is evaluated by a programmatic grader that compares the agent's output against a target value calculated using a 20% flat tax rate after statutory deductions.
 
 ## Setup and Usage Instructions
 
@@ -98,3 +107,7 @@ cd TaxAgent-OpenEnv
 pip install -r requirements.txt
 export HF_TOKEN="your_hf_token_here"
 python src/inference.py
+
+
+
+
