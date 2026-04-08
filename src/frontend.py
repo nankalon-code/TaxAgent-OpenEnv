@@ -1,59 +1,116 @@
 import gradio as gr
 import time
+import json
 
-# Professional Task Metadata
+# Technical Task Definitions
 task_data = {
     "Task 1: EASY": {
-        "description": "Income classification and ITR form selection.",
-        "details": "Salary and house property evaluation.",
-        "requirements": "Target: ITR-1 (Sahaj)"
+        "income": 50000,
+        "deduction_limit": 10000,
+        "type": "ITR-1",
+        "context": "Standard employee filing"
     },
     "Task 2: MEDIUM": {
-        "description": "Identify valid deductions from messy expenses.",
-        "details": "Section 80C and 80D compliance check.",
-        "requirements": "Target: Maximize statutory limits"
+        "income": 120000,
+        "deduction_limit": 15000,
+        "type": "ITR-2",
+        "context": "Investment & Capital Gains evaluation"
     },
     "Task 3: HARD": {
-        "description": "Multi-year audit risk and amended returns.",
-        "details": "Flagging reporting errors and liability minimization.",
-        "requirements": "Target: Risk mitigation / FY2024 Correction"
+        "income": 350000,
+        "deduction_limit": 25000,
+        "type": "ITR-3/Audit",
+        "context": "High-net-worth audit risk mitigation"
     }
 }
 
 task_options = list(task_data.keys())
 
-def update_task_info(task_name):
-    """Updates the UI display boxes when a new task is selected."""
-    info = task_data.get(task_name, {})
-    return info.get("description", ""), info.get("details", ""), info.get("requirements", "")
-
 def run_evaluation(task_name):
-    """
-    Main evaluation logic simulating professional ITR workflows.
-    Uses strict dictionary format for Gradio 5 compatibility.
-    """
     history = []
     total_reward = 0.0
     
-    # Step 1: System Initialization
-    history.append({"role": "user", "content": f"Begin evaluation for {task_name}"})
-    history.append({"role": "assistant", "content": "Environment initialized. Loading local tax statutes and ITR workflow standards."})
-    yield history, total_reward, 0.0
+    # The 'State' that makes the project detailed
+    current_state = {
+        "session_active": True,
+        "task": task_name,
+        "current_step": 0,
+        "taxable_income": task_data[task_name]["income"],
+        "applied_deductions": 0,
+        "audit_risk_detected": False,
+        "status": "Initializing"
+    }
+    
+    # Initialization
+    history.append({"role": "user", "content": f"Execute Pipeline: {task_name}"})
+    history.append({"role": "assistant", "content": "Initializing OpenEnv. Synchronizing state with baseline LLM."})
+    yield history, total_reward, 0.0, current_state
     time.sleep(0.8)
 
-    if "EASY" in task_name:
-        history.append({"role": "assistant", "content": "Action: classify_income_sources()\nResult: Primary income identified as Salary. Criteria validated for ITR-1 selection."})
-        total_reward += 0.5
-        yield history, total_reward, 0.5
-        time.sleep(1)
-        history.append({"role": "assistant", "content": "Action: validate_form_selection()\nResult: Form ITR-1 (Sahaj) confirmed as optimal filing path.\n\nStatus: Task Complete. Grader Score: 1.0"})
-        total_reward += 0.5
-        yield history, total_reward, 0.5
+    # Step 1: Data Classification
+    current_state["current_step"] = 1
+    current_state["status"] = "Processing Data"
+    history.append({"role": "assistant", "content": "Action: classify_income()\nObservation: Income streams validated against statutory thresholds."})
+    total_reward += 0.3
+    yield history, total_reward, 0.3, current_state
+    time.sleep(1)
 
-    elif "MEDIUM" in task_name:
-        history.append({"role": "assistant", "content": "Action: parse_expense_stream()\nResult: Processing unstructured financial data. 14 potential deductions identified."})
-        yield history, total_reward, 0.0
-        time.sleep(1)
-        history.append({"role": "assistant", "content": "Action: apply_statutory_filters(Sec_80C, Sec_80D)\nResult: Validated LIC and Medical Insurance premiums. Applied Section 80C cap of 150,000 INR."})
-        total_reward += 1.0
-        yield history, total_reward, 1.
+    # Step 2: Deduction Logic
+    current_state["current_step"] = 2
+    current_state["applied_deductions"] = task_data[task_name]["deduction_limit"]
+    current_state["taxable_income"] -= current_state["applied_deductions"]
+    history.append({"role": "assistant", "content": f"Action: apply_deduction()\nObservation: Section 80C/D applied. Net taxable income adjusted to {current_state['taxable_income']}."})
+    total_reward += 0.3
+    yield history, total_reward, 0.3, current_state
+    time.sleep(1)
+
+    # Step 3: Risk Assessment (Detail: The logic changes for Hard tasks)
+    current_state["current_step"] = 3
+    if "HARD" in task_name:
+        current_state["audit_risk_detected"] = True
+        history.append({"role": "assistant", "content": "Action: detect_audit_risk()\nWarning: Variance detected in FY2024 records. Transitioning to mitigation workflow."})
+    else:
+        history.append({"role": "assistant", "content": "Action: detect_audit_risk()\nObservation: No significant variances detected."})
+    
+    total_reward += 0.4
+    current_state["status"] = "Finalizing"
+    history.append({"role": "assistant", "content": "Action: submit_filing()\nResult: Return transmitted. Terminating environment session."})
+    yield history, total_reward, 0.4, current_state
+
+css = """
+.gradio-container { background-color: #0b0f19 !important; }
+.glass-card { 
+    background: rgba(255, 255, 255, 0.03) !important; 
+    backdrop-filter: blur(12px) !important; 
+    border: 1px solid rgba(255, 255, 255, 0.1) !important; 
+    border-radius: 12px !important;
+}
+"""
+
+with gr.Blocks(css=css) as demo:
+    with gr.Column(elem_classes="glass-card"):
+        gr.Markdown("# Tax Agent OpenEnv Evaluation")
+        
+        with gr.Row():
+            with gr.Column(scale=3):
+                task_dropdown = gr.Dropdown(choices=task_options, label="Select Evaluation Task", value=task_options[0])
+                run_btn = gr.Button("Execute Agent Pipeline", variant="primary")
+            with gr.Column(scale=1):
+                total_reward_display = gr.Number(label="Total Reward", value=0.0, interactive=False)
+                step_reward_display = gr.Number(label="Step Reward", value=0.0, interactive=False)
+
+        with gr.Row():
+            # Left: The Human-Readable Logs
+            chatbot = gr.Chatbot(label="Agent Logs", height=450, type="messages")
+            
+            # Right: The Machine-Readable State (Adds the "Detail")
+            state_viewer = gr.JSON(label="Live Environmental State (JSON)")
+
+    run_btn.click(
+        fn=run_evaluation,
+        inputs=[task_dropdown],
+        outputs=[chatbot, total_reward_display, step_reward_display, state_viewer]
+    )
+
+if __name__ == "__main__":
+    demo.launch(theme=gr.themes.Glass())
