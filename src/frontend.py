@@ -120,7 +120,6 @@ with gr.Blocks() as demo:
             gr.Markdown("---")
             gr.Markdown("### System State")
             state_viewer = gr.JSON(label=None)
-
     run_btn.click(
         fn=run_evaluation,
         inputs=[task_dropdown],
