@@ -1,0 +1,21 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Pytest
+.pytest_cache/
+.pytest/
+
+# OS metadata
+.DS_Store
+Thumbs.db
+
+# Evaluation results & artifacts
+results/
+ebpf_sandbox/results/
+
+# Temporary directories
+tmp/
+temp/

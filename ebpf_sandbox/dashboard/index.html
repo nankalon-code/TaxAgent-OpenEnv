@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TaxAgent-OpenEnv — eBPF Sandbox Monitor</title>
+  <meta name="description" content="Real-time kernel-level syscall monitoring for AI agent sandboxing." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar-left">
+    <svg class="logo-icon" width="28" height="28" viewBox="0 0 32 32" fill="none">
+      <path d="M16 2L4 7v9c0 7.18 5.15 13.89 12 15.93C23.85 29.89 28 23.18 28 16V7L16 2Z" fill="url(#sg)"/>
+      <path d="M11 16l3 3 7-7" stroke="rgba(255,255,255,0.85)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+      <defs>
+        <linearGradient id="sg" x1="4" y1="2" x2="28" y2="32" gradientUnits="userSpaceOnUse">
+          <stop stop-color="#4f46e5"/><stop offset="1" stop-color="#0891b2"/>
+        </linearGradient>
+      </defs>
+    </svg>
+    <div>
+      <div class="topbar-title">eBPF Kernel Sandbox</div>
+      <div class="topbar-sub">TaxAgent-OpenEnv · Syscall Monitor</div>
+    </div>
+  </div>
+  <div class="topbar-right">
+    <div class="status-pill" id="connectionStatus">
+      <span class="status-dot" id="statusDot"></span>
+      <span id="statusText">Idle</span>
+    </div>
+    <button class="btn-ghost" id="btnClearLog">Clear</button>
+    <button class="btn-primary" id="btnRunAgent">Run Agent</button>
+  </div>
+</header>
+
+<main class="layout">
+
+  <aside class="col-left">
+    <div class="card">
+      <div class="metric-label">Total Intercepts</div>
+      <div class="metric-value" id="statTotal">0</div>
+      <div class="metric-sub">syscall events captured</div>
+    </div>
+    <div class="card card-alert">
+      <div class="metric-label">Write Attempts</div>
+      <div class="metric-value text-alert" id="statWrites">0</div>
+      <div class="metric-sub">unauthorized writes</div>
+    </div>
+    <div class="card card-ok">
+      <div class="metric-label">Read Events</div>
+      <div class="metric-value text-ok" id="statReads">0</div>
+      <div class="metric-sub">benign file reads</div>
+    </div>
+    <div class="card card-accent">
+      <div class="metric-label">Anomaly Score</div>
+      <div class="metric-value text-accent" id="statRisk">—</div>
+      <div class="metric-sub">isolation forest</div>
+    </div>
+    <div class="card">
+      <div class="section-label">Threat Radar</div>
+      <canvas id="radarCanvas" width="224" height="224"></canvas>
+      <div class="legend">
+        <div class="legend-item"><span class="dot dot-ok"></span>Normal</div>
+        <div class="legend-item"><span class="dot dot-warn"></span>Suspicious</div>
+        <div class="legend-item"><span class="dot dot-alert"></span>Threat</div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="section-label">Path Distribution</div>
+      <div class="bars">
+        <div class="bar-row"><span class="bar-key">/tmp</span><div class="bar-track"><div class="bar-val bar-ok" id="bar-tmp" style="width:0%"></div></div><span class="bar-pct" id="pct-tmp">0%</span></div>
+        <div class="bar-row"><span class="bar-key">/etc</span><div class="bar-track"><div class="bar-val bar-alert" id="bar-etc" style="width:0%"></div></div><span class="bar-pct" id="pct-etc">0%</span></div>
+        <div class="bar-row"><span class="bar-key">/proc</span><div class="bar-track"><div class="bar-val bar-warn" id="bar-proc" style="width:0%"></div></div><span class="bar-pct" id="pct-proc">0%</span></div>
+        <div class="bar-row"><span class="bar-key">/home</span><div class="bar-track"><div class="bar-val bar-alert" id="bar-home" style="width:0%"></div></div><span class="bar-pct" id="pct-home">0%</span></div>
+        <div class="bar-row"><span class="bar-key">other</span><div class="bar-track"><div class="bar-val bar-muted" id="bar-other" style="width:0%"></div></div><span class="bar-pct" id="pct-other">0%</span></div>
+      </div>
+    </div>
+  </aside>
+
+  <section class="col-center">
+    <div class="feed-header">
+      <h2 class="feed-title">Kernel Event Feed</h2>
+      <div class="filters">
+        <button class="filter active" data-filter="all">All</button>
+        <button class="filter" data-filter="write">Writes</button>
+        <button class="filter" data-filter="threat">Threats</button>
+      </div>
+    </div>
+    <div class="feed" id="eventFeed">
+      <div class="feed-empty" id="feedEmpty">
+        <svg width="36" height="36" viewBox="0 0 32 32" fill="none" style="margin-bottom:12px;opacity:.2">
+          <path d="M16 2L4 7v9c0 7.18 5.15 13.89 12 15.93C23.85 29.89 28 23.18 28 16V7L16 2Z" stroke="#94a3b8" stroke-width="1.5"/>
+          <path d="M11 16l3 3 7-7" stroke="#94a3b8" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        <p>No events — select a scenario to begin.</p>
+      </div>
+    </div>
+  </section>
+
+  <aside class="col-right">
+    <div class="card">
+      <div class="section-label">ML Anomaly Engine</div>
+      <div class="section-sub">Isolation Forest over file-access feature vectors, scored per event batch.</div>
+      <div class="gauge-wrap">
+        <canvas id="scoreGauge" width="180" height="100"></canvas>
+        <div class="gauge-val" id="mlScoreLabel">—</div>
+        <div class="gauge-sub">anomaly confidence</div>
+      </div>
+      <div class="features">
+        <div class="feat-row"><span class="feat-k">Path entropy</span><span class="feat-v" id="feat-entropy">—</span></div>
+        <div class="feat-row"><span class="feat-k">Write / Read</span><span class="feat-v" id="feat-ratio">—</span></div>
+        <div class="feat-row"><span class="feat-k">Sensitive dirs</span><span class="feat-v" id="feat-sensitive">—</span></div>
+        <div class="feat-row"><span class="feat-k">Burst rate</span><span class="feat-v" id="feat-burst">—</span></div>
+        <div class="feat-row feat-decision"><span class="feat-k">Decision</span><span class="feat-v" id="feat-decision">—</span></div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="section-label">Kernel Probe</div>
+      <div class="kvs">
+        <div class="kv"><span class="kv-k">Type</span><span class="kv-v mono" id="ki-probe">tracepoint</span></div>
+        <div class="kv"><span class="kv-k">Hook</span><span class="kv-v mono" id="ki-attach">sys_enter_openat</span></div>
+        <div class="kv"><span class="kv-k">pid_map</span><span class="kv-v mono" id="ki-pids">0 entries</span></div>
+        <div class="kv"><span class="kv-k">Ring buffer</span><span class="kv-v mono" id="ki-rb">64 pg/CPU</span></div>
+        <div class="kv"><span class="kv-k">Lost events</span><span class="kv-v mono" id="ki-lost">0</span></div>
+        <div class="kv"><span class="kv-k">Active PID</span><span class="kv-v mono" id="ki-pid">none</span></div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="section-label">Security Hardening</div>
+      <ul class="checks">
+        <li class="check"><span class="check-mark"></span>Write-flag classification</li>
+        <li class="check"><span class="check-mark"></span>Kernel timestamp anti-replay</li>
+        <li class="check"><span class="check-mark"></span>Script permissions 0o700</li>
+        <li class="check"><span class="check-mark"></span>Explicit struct padding</li>
+        <li class="check"><span class="check-mark"></span>PID recycling TOCTOU guard</li>
+      </ul>
+    </div>
+  </aside>
+
+</main>
+
+<div class="overlay" id="modalOverlay">
+  <div class="modal">
+    <div class="modal-title">Select Agent Scenario</div>
+    <div class="modal-desc">Each profile produces distinct kernel events and ML scoring. Choose a behaviour to simulate.</div>
+    <div class="scenarios">
+      <button class="scenario scenario-ok" data-scenario="normal" id="scNormal">
+        <div class="scenario-name">Normal Agent</div>
+        <div class="scenario-desc">Reads from sandbox temp directory only</div>
+      </button>
+      <button class="scenario scenario-warn" data-scenario="curious" id="scCurious">
+        <div class="scenario-name">Curious Agent</div>
+        <div class="scenario-desc">Probes /proc and /etc/hostname</div>
+      </button>
+      <button class="scenario scenario-alert" data-scenario="malicious" id="scMalicious">
+        <div class="scenario-name">Malicious Agent</div>
+        <div class="scenario-desc">Attempts writes to /etc/passwd, /etc/shadow</div>
+      </button>
+    </div>
+    <button class="btn-ghost modal-cancel" id="modalClose">Cancel</button>
+  </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
