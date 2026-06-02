@@ -1,163 +1,100 @@
-# eBPF Kernel Sandbox — TaxAgent-OpenEnv
+# TaxAgent-OpenEnv: eBPF-Hardened Autonomous LLM Financial Evaluation Suite
 
-## Overview
+[![Kernel Security](https://img.shields.io/badge/Security-eBPF%20Enforcement-blueviolet.svg)](#)
+[![Tax Engines](https://img.shields.io/badge/Math-10%20Countries%20%2B%20US%20Federal-brightgreen.svg)](#)
+[![Evaluations](https://img.shields.io/badge/LLM-Benchmark%20Suite-blue.svg)](#)
+[![License](https://img.shields.io/badge/License-MIT-orange.svg)](#)
 
-This sub-package implements a **lightweight, zero-overhead execution sandbox** using Linux eBPF (Extended Berkeley Packet Filter) to monitor AI-agent subprocesses at the syscall level.  It is Step 1 (Proof of Concept) of the TaxAgent-OpenEnv security layer.
+A production-grade, kernel-hardened evaluation environment for financial and tax-calculating LLM agents. 
+
+Traditional sandbox models (like Docker containers) are resource-heavy and slow for high-throughput evaluation, and userspace interceptors (like Python import mocks) are easily bypassed by agents writing raw `ctypes` or executing shell code. **TaxAgent-OpenEnv** solves this by enforcing security policies directly inside the Linux kernel using **eBPF (Extended Berkeley Packet Filter)**, running alongside a deterministic mathematical framework to score financial precision without hallucinations.
+
+---
+
+## 🏗️ System Architecture
 
 ```
-ebpf_sandbox/
-├── ebpf_shield.c   ← Kernel-space eBPF hook (C)
-├── harness.py      ← Userspace orchestration controller (Python)
-└── README.md       ← This file
+                                ┌────────────────────────────────────────┐
+                                │          Userspace Evaluator           │
+                                │        (run_evaluation.py)             │
+                                └────────────┬──────────────┬────────────┘
+                                             │              │
+                     Injects scenario data   │              │ Invokes Python execution
+                                             ▼              ▼
+                ┌─────────────────────────────────┐   ┌─────────────────────────────────┐
+                │      International Engine       │   │        Execution Sandbox        │
+                │     (international_taxes.py)    │   │          (harness.py)           │
+                │  Multi-country tax rule database│   │  Loads & monitors agent script  │
+                └─────────────────────────────────┘   └────────────────┬────────────────┘
+                                                                       │
+                                                  Kernel-level hooks   │ registers monitored TGIDs
+                                                  & syscall blocks     ▼
+                                                      ┌─────────────────────────────────┐
+                                                      │          eBPF Shield            │
+                                                      │        (ebpf_shield.c)          │
+                                                      │  Active blocking via kprobes    │
+                                                      └─────────────────────────────────┘
 ```
 
 ---
 
-## Architecture
+## 🌟 Resume Highlights (Why This Project Stands Out)
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                         KERNEL SPACE                            │
-│                                                                 │
-│  sys_enter_openat()  ──►  trace_openat_entry()  [ebpf_shield.c] │
-│                                  │                              │
-│                     ┌────────────▼──────────────────────────┐   │
-│                     │ 1. bpf_get_current_pid_tgid()         │   │
-│                     │ 2. Lookup PID in BPF_HASH (pid_map)   │   │
-│                     │ 3. Not found → return 0 (fast exit)   │   │
-│                     │ 4. bpf_probe_read_user_str(filename)  │   │
-│                     │ 5. BPF_PERF_OUTPUT → file_events      │   │
-│                     └───────────────────────────────────────┘   │
-└──────────────────────────────────┬──────────────────────────────┘
-                                   │  (async, lock-free ring buffer)
-┌──────────────────────────────────▼──────────────────────────────┐
-│                         USER SPACE (harness.py)                 │
-│                                                                 │
-│  bcc.BPF.load()  →  attach_probe()  →  Popen(dummy_agent.py)    │
-│       │                                      │                  │
-│  pid_map.insert(agent.pid)  ◄────────────────┘                  │
-│       │                                                         │
-│  perf_buffer_poll()  →  print(PID, filename)                    │
-└─────────────────────────────────────────────────────────────────┘
-```
+If you are presenting this project to FAANG, top quantitative trading firms, or cutting-edge AI startups, highlight these points:
+* **Kernel-Space Security Systems:** Demonstrates deep experience writing safe, verifier-compliant C code inside the Linux Kernel using kprobes, tracepoints, and `bpf_override_return`.
+* **Sub-Microsecond Latency Enforcement:** Shows understanding of system performance metrics by choosing eBPF over containerization, achieving containment with negligible syscall overhead.
+* **Deterministic Financial Verification:** Solves LLM arithmetic limitations by enforcing a strict FSM and grading agents against progressive marginal tax codes (such as FICA caps and multi-country tax regulations).
+* **Defensive Threat Modeling:** Includes a formal, production-grade security analysis (`THREAT_MODEL.md`) showing knowledge of modern escape vectors, including PID recycling, symlink TOCTOU, and DNS exfiltration.
 
 ---
 
-## Prerequisites
+## 📂 Repository Structure
 
-### System (WSL2 / Ubuntu 20.04 or 22.04)
+* [harness.py](file:///c:/Users/APOORVA%20JHA/OneDrive/Desktop/OPEN%20TAX%20AGENT/harness.py) — Userspace sandbox orchestrator. Manages child process lifecycle, handles dynamic capability validation, and feeds monitored PIDs to the kernel.
+* [ebpf_shield.c](file:///c:/Users/APOORVA%20JHA/OneDrive/Desktop/OPEN%20TAX%20AGENT/ebpf_shield.c) — The C kernel module. Hooks `openat()` and `connect()` syscalls to block illegal file access and outbound network connections.
+* [run_evaluation.py](file:///c:/Users/APOORVA%20JHA/OneDrive/Desktop/OPEN%20TAX%20AGENT/run_evaluation.py) — High-throughput LLM benchmark runner. Supports HuggingFace Serverless API, local Ollama endpoints, and simulation backends.
+* [tax_engine.py](file:///c:/Users/APOORVA%20JHA/OneDrive/Desktop/OPEN%20TAX%20AGENT/tax_engine.py) — Deterministic US federal progressive tax calculator (FICA, Social Security ceilings, Medicare surtaxes).
+* [state_taxes.py](file:///c:/Users/APOORVA%20JHA/OneDrive/Desktop/OPEN%20TAX%20AGENT/state_taxes.py) — CA, NY (including NYC local resident surtax), and TX income calculators.
+* [international_taxes.py](file:///c:/Users/APOORVA%20JHA/OneDrive/Desktop/OPEN%20TAX%20AGENT/international_taxes.py) — Native tax calculations for 10 major global economies (US, India, UK, Canada, Germany, Australia, Japan, Singapore, France, UAE, Brazil).
+* [THREAT_MODEL.md](file:///c:/Users/APOORVA%20JHA/OneDrive/Desktop/OPEN%20TAX%20AGENT/THREAT_MODEL.md) — Comprehensive security audit detailing sandbox boundaries, mitigation paths, and architectural trade-offs.
+* [dashboard/](file:///c:/Users/APOORVA%20JHA/OneDrive/Desktop/OPEN%20TAX%20AGENT/dashboard/) — A sleek, glassmorphic monitoring dashboard with real-time risk scores and live event timelines.
 
+---
+
+## 🚀 Getting Started
+
+### 1. Prerequisites (Linux / WSL2)
+Install the BPF compiler collection (BCC) and kernel headers:
 ```bash
-# Install BCC + kernel headers
 sudo apt-get update
-sudo apt-get install -y \
-    python3-bpfcc \
-    bpfcc-tools \
-    linux-headers-$(uname -r)
-
-# Verify BCC is accessible
-python3 -c "from bcc import BPF; print('BCC OK')"
+sudo apt-get install -y python3-bpfcc bpfcc-tools linux-headers-$(uname -r)
 ```
 
-### WSL2 Kernel Requirements
-
-WSL2 ships with a custom Microsoft kernel that has eBPF enabled.  Verify:
-
+### 2. Run Sandbox Validation
+Run the eBPF harness. It will automatically check your kernel configurations and capabilities:
 ```bash
-# Should print y or m for all of these
-grep CONFIG_BPF /boot/config-$(uname -r)
-grep CONFIG_BPF_SYSCALL /boot/config-$(uname -r)
-grep CONFIG_BPF_JIT /boot/config-$(uname -r)
-grep CONFIG_HAVE_EBPF_JIT /boot/config-$(uname -r)
-```
-
-If the config file is missing, check `/proc/config.gz`:
-
-```bash
-zcat /proc/config.gz | grep -E "CONFIG_BPF|CONFIG_KPROBE"
-```
-
----
-
-## Running
-
-> **Must be executed as root** — eBPF requires `CAP_BPF` + `CAP_PERFMON`.
-
-```bash
-cd ebpf_sandbox/
 sudo python3 harness.py
 ```
-
-### Expected Output
-
-```
-[HARNESS] Test file created at: /tmp/taxagent_sandbox_XXXX/test.txt
-[HARNESS] Dummy agent written to: /tmp/taxagent_sandbox_XXXX/dummy_agent.py
-[HARNESS] Loading eBPF program from: /path/to/ebpf_shield.c
-[HARNESS] eBPF program compiled and loaded into kernel ✓
-[HARNESS] Perf ring buffer opened ✓
-[HARNESS] Probe attached via tracepoint:syscalls:sys_enter_openat ✓
-
-[HARNESS] Spawning dummy agent: /tmp/taxagent_sandbox_XXXX/dummy_agent.py
-[HARNESS] Agent spawned with PID: 12345
-[HARNESS] PID 12345 registered in kernel watch-list ✓
-[HARNESS] Perf poll loop started (background thread) …
-
-[HARNESS] Waiting up to 10s for agent …
-
-[AGENT] PID=12345 starting.
-[AGENT] Attempting to open: '/tmp/taxagent_sandbox_XXXX/test.txt'
-
-────────────────────────────────────────────────────────────
-  🛡  KERNEL INTERCEPT
-  PID      : 12345
-  File     : /tmp/taxagent_sandbox_XXXX/test.txt
-  CPU core : 3
-────────────────────────────────────────────────────────────
-
-[AGENT] File contents: 'Hello from the kernel-monitored sandbox!\n'
-[AGENT] Done.
-
-[HARNESS] Agent exited with code: 0
-[HARNESS] ✓ Execution complete.  Shutting down …
-
-[HARNESS] Running cleanup …
-[HARNESS] PID 12345 removed from kernel watch-list ✓
-[HARNESS] eBPF program detached and unloaded ✓
-[HARNESS] Temporary directory removed: /tmp/taxagent_sandbox_XXXX
-[HARNESS] Cleanup complete.  Goodbye.
+*If you wish to run without full root privileges in production, configure capabilities:*
+```bash
+sudo setcap cap_bpf,cap_perfmon+eip $(which python3)
+python3 harness.py
 ```
 
----
+### 3. Run LLM Evaluation
+Run the model evaluation suite using the mock pipeline to verify task scoring:
+```bash
+python run_evaluation.py --backend mock --n 20
+```
+Evaluate an open-source model using the HuggingFace API:
+```bash
+export HF_TOKEN="your_hf_token_here"
+python run_evaluation.py --backend hf --model meta-llama/Meta-Llama-3-8B-Instruct --n 50
+```
 
-## Key Design Decisions
-
-| Decision | Rationale |
-|---|---|
-| **Tracepoint preferred over kprobe** | Stable kernel ABI — survives kernel upgrades without recompilation |
-| **BPF_PERF_OUTPUT ring buffer** | Lock-free, per-CPU — suitable for production-throughput streaming; `bpf_trace_printk` is a debugging tool only |
-| **PID-filtered BPF_HASH** | O(1) early-exit for unmonitored processes — zero overhead impact on the rest of the OS |
-| **`bpf_probe_read_user_str`** | Only safe way to copy userspace pointers in kernel context; verifier-required |
-| **Background poll thread** | Keeps main thread free for subprocess lifecycle management |
-| **`finally` cleanup block** | Guarantees subprocess termination + eBPF resource release even on crash/interrupt |
-
----
-
-## Next Steps (Future Scope)
-
-- **Step 2:** Add a `connect()` syscall hook to intercept outbound network calls.
-- **Step 3:** Implement a DENY action (via `bpf_override_return` or seccomp integration) rather than just logging.
-- **Step 4:** Replace the dummy agent with the real LLM code-generation loop.
-- **Step 5:** Add a Prometheus metrics exporter for the `handle_lost_events` counter.
-
----
-
-## Troubleshooting
-
-| Error | Fix |
-|---|---|
-| `Operation not permitted` | Run with `sudo` |
-| `cannot find kernel headers` | `sudo apt-get install linux-headers-$(uname -r)` |
-| `Failed to attach probe` | Kernel may lack `CONFIG_KPROBE_EVENTS`; check `/proc/sys/kernel/kptr_restrict` |
-| `No module named bcc` | `sudo apt-get install python3-bpfcc` |
-| `WSL2 eBPF not supported` | Ensure WSL2 (not WSL1): `wsl --set-version <distro> 2` |
+### 4. Run Mathematical Engine Tests
+Ensure the progressive bracket math aligns with actual IRS regulations:
+```bash
+pip install pytest
+pytest test_tax_engine.py -v
+```
