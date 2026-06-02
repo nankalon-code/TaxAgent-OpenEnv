@@ -54,13 +54,12 @@ def _india(gross: float, regime: str = "new") -> CountryTaxResult:
         # Section 87A rebate: full rebate if income ≤ ₹7,00,000
         if gross <= 700_000 and tax > 0:
             tax = 0.0; notes.append("Section 87A rebate applied — zero tax liability")
-        # Surcharge
+        # Surcharge (applied to high earners under New Tax Regime)
         surcharge = 0.0
-        if gross > 5_000_000: surcharge = tax * 0.25
-        elif gross > 2_000_000: surcharge = tax * 0.25
-        elif gross > 1_000_000: surcharge = tax * 0.15
-        elif gross > 500_000: surcharge = tax * 0.10
-        if surcharge: notes.append(f"Surcharge: ₹{surcharge:,.0f}")
+        if gross > 20_000_000:   surcharge = tax * 0.25  # > 2 Crore
+        elif gross > 10_000_000: surcharge = tax * 0.15  # > 1 Crore
+        elif gross > 5_000_000:  surcharge = tax * 0.10  # > 50 Lakh
+        if surcharge: notes.append(f"Surcharge: \u20b9{surcharge:,.0f}")
         cess = (tax + surcharge) * 0.04  # 4% Health & Education Cess
         income_tax = round(tax + surcharge + cess, 2)
         notes.append(f"4% H&E Cess: ₹{cess:,.0f}")
@@ -82,7 +81,7 @@ def _india(gross: float, regime: str = "new") -> CountryTaxResult:
 
 # ─── UNITED KINGDOM 2024-25 ──────────────────────────────────────────────────
 # Source: HMRC rates and thresholds 2024-25
-_UK_BRACKETS = [(12570,50270,0.20),(50270,125140,0.40),(125140,None,0.45)]
+_UK_BRACKETS = [(0,37700,0.20),(37700,125140,0.40),(125140,None,0.45)]
 _UK_PERSONAL_ALLOWANCE = 12_570
 
 def _uk(gross: float) -> CountryTaxResult:
