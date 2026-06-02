@@ -64,6 +64,9 @@ import textwrap
 import tempfile
 import subprocess
 import threading
+import http.server
+import socketserver
+import json
 
 # ── Third-party (BCC / eBPF) ─────────────────────────────────────────────────
 try:
@@ -572,6 +575,15 @@ def build_perf_callback(stop_event: threading.Event):
             print("  \u26a0\ufe0f  [SECURITY ALERT] Agent attempting WRITE access! "
                   "Consider blocking.", flush=True)
 
+        # Broadcast event to any connected SSE dashboard clients
+        broadcast_sse_event("syscall", {
+            "pid": event.pid,
+            "filename": filename,
+            "is_write": bool(event.is_write),
+            "flags": event.flags,
+            "ts": event.timestamp_ns
+        })
+
     def handle_lost_events(cpu: int, count: int) -> None:
         """
         Called when the ring buffer overflows and events are lost.
@@ -611,6 +623,81 @@ def run_perf_poll(bpf_obj: BPF, stop_event: threading.Event) -> None:
 
 
 # ==============================================================================
+#  LIVE DASHBOARD SSE SERVER
+# ==============================================================================
+
+active_clients = []
+clients_lock = threading.Lock()
+
+class SSEHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
+    def log_message(self, format, *args):
+        # Suppress logging request noise to keep console clean
+        return
+
+    def do_GET(self):
+        if self.path == "/stream":
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("Cache-Control", "no-cache")
+            self.send_header("Connection", "keep-alive")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            
+            with clients_lock:
+                active_clients.append(self.wfile)
+            
+            try:
+                while True:
+                    time.sleep(1)
+                    self.wfile.write(b": keepalive\n\n")
+                    self.wfile.flush()
+            except (ConnectionError, BrokenPipeError, OSError):
+                pass
+            finally:
+                with clients_lock:
+                    if self.wfile in active_clients:
+                        active_clients.remove(self.wfile)
+            return
+
+        return super().do_GET()
+
+    def translate_path(self, path):
+        root = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dashboard")
+        if path == "/":
+            return os.path.join(root, "index.html")
+        parts = path.lstrip("/").split("/")
+        return os.path.join(root, *parts)
+
+
+def broadcast_sse_event(event_type: str, data: dict):
+    payload = f"event: {event_type}\ndata: {json.dumps(data)}\n\n"
+    with clients_lock:
+        dead_clients = []
+        for client in active_clients:
+            try:
+                client.write(payload.encode("utf-8"))
+                client.flush()
+            except Exception:
+                dead_clients.append(client)
+        for client in dead_clients:
+            if client in active_clients:
+                active_clients.remove(client)
+
+
+def run_http_server():
+    server_address = ("", 8000)
+    class ThreadedHTTPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
+        allow_reuse_address = True
+    
+    try:
+        httpd = ThreadedHTTPServer(server_address, SSEHTTPRequestHandler)
+        print("[HARNESS] Live Dashboard Server running on http://localhost:8000 ...")
+        httpd.serve_forever()
+    except Exception as e:
+        print(f"[HARNESS][WARN] Failed to start Live Dashboard Server: {e}")
+
+
+# ==============================================================================
 #  MAIN ORCHESTRATION
 # ==============================================================================
 
@@ -646,6 +733,14 @@ def main() -> int:
     tmp_dir:     str | None              = None
 
     try:
+        # Start Live Dashboard Server in background
+        server_thread = threading.Thread(
+            target=run_http_server,
+            daemon=True,
+            name="dashboard-server"
+        )
+        server_thread.start()
+
         # ── Step 1: Create a temporary workspace ─────────────────────────────
         #
         # We use tempfile.mkdtemp() for an isolated, uniquely-named directory.
@@ -698,6 +793,9 @@ def main() -> int:
         agent_pid = agent_proc.pid
         print(f"[HARNESS] Agent spawned with PID: {agent_pid}")
 
+        # Broadcast spawn event to live dashboard
+        broadcast_sse_event("spawn", {"pid": agent_pid})
+
         # ── Step 6: Activate kernel monitoring for this PID ──────────────────
         #
         # This is the critical coupling step: by inserting agent_pid into the
@@ -716,6 +814,7 @@ def main() -> int:
 
         # ── Step 8: Wait for the agent to complete ────────────────────────────
         print(f"\n[HARNESS] Waiting up to {AGENT_TIMEOUT_SECONDS}s for agent …\n")
+        exit_code = 0
         try:
             agent_proc.wait(timeout=AGENT_TIMEOUT_SECONDS)
             exit_code = agent_proc.returncode
@@ -723,6 +822,10 @@ def main() -> int:
 
         except subprocess.TimeoutExpired:
             print(f"\n[HARNESS][WARN] Agent exceeded {AGENT_TIMEOUT_SECONDS}s timeout.")
+            exit_code = -1
+
+        # Broadcast exit event to live dashboard
+        broadcast_sse_event("exit", {"pid": agent_pid, "code": exit_code})
 
         # Give the perf poll loop one final drain cycle to collect any events
         # that were in-flight when the agent exited.
@@ -733,10 +836,15 @@ def main() -> int:
 
     except KeyboardInterrupt:
         print("\n[HARNESS] Interrupted by user (Ctrl+C).")
+        # Attempt to broadcast exit on interrupt
+        if agent_pid:
+            broadcast_sse_event("exit", {"pid": agent_pid, "code": 130})
         return 130   # Standard SIGINT exit code
 
     except Exception as exc:
         print(f"\n[HARNESS][ERROR] Unhandled exception: {exc}")
+        if agent_pid:
+            broadcast_sse_event("exit", {"pid": agent_pid, "code": 1})
         import traceback
         traceback.print_exc()
         return 1

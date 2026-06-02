@@ -397,3 +397,48 @@ $("btnClearLog").addEventListener("click", () => {
 drawGauge(0);
 drawRadar(0);
 updateStats();
+
+// ── Live eBPF Integration (SSE Client) ────────────────────────
+if (window.location.protocol.startsWith("http")) {
+  console.log("Connecting to live eBPF stream at /stream...");
+  const sse = new EventSource("/stream");
+  
+  sse.addEventListener("spawn", (e) => {
+    const data = JSON.parse(e.data);
+    state.running = true;
+    state.agentPid = data.pid;
+    state.startTime = Date.now();
+    $("ki-pid").textContent = state.agentPid;
+    $("ki-pids").textContent = "1 entry";
+    $("statusText").textContent = "LIVE — PID " + state.agentPid;
+    // Reset state for new run
+    state.total = 0; state.writes = 0; state.reads = 0;
+    state.events = [];
+    state.pathCounts = { tmp: 0, etc: 0, proc: 0, home: 0, other: 0 };
+    eventFeed.innerHTML = "";
+    eventFeed.appendChild(feedEmpty);
+    feedEmpty.style.display = "flex";
+    updateStats();
+  });
+  
+  sse.addEventListener("syscall", (e) => {
+    const data = JSON.parse(e.data);
+    const p = data.filename;
+    const isThreat = p.startsWith("/etc") || p.startsWith("/proc") || p.startsWith("/home") || p.startsWith("/root");
+    addEvent({
+      file: data.filename,
+      write: data.is_write,
+      threat: isThreat
+    });
+  });
+  
+  sse.addEventListener("exit", (e) => {
+    const data = JSON.parse(e.data);
+    state.running = false;
+    state.agentPid = null;
+    $("statusText").textContent = `STOPPED — Code ${data.code}`;
+    $("ki-pid").textContent = "none";
+    $("ki-pids").textContent = "0 entries";
+  });
+}
+
