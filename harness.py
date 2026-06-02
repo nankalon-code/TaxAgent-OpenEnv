@@ -67,6 +67,7 @@ import threading
 import http.server
 import socketserver
 import json
+import resource
 
 # ── Third-party (BCC / eBPF) ─────────────────────────────────────────────────
 try:
@@ -289,12 +290,10 @@ def write_dummy_agent(agent_script_path: str, target_file_path: str) -> None:
     with open(agent_script_path, "w") as fh:
         fh.write(agent_code)
 
-    # SECURITY FIX #3 — Restrict agent script permissions.
-    # Original code set 0o755 (world-readable AND world-executable).
-    # In a multi-user evaluation server that would allow any local user to
-    # read potentially sensitive LLM-generated code or execute it directly.
-    # 0o700 limits access to the owning process (root in our case).
-    os.chmod(agent_script_path, 0o700)
+    # SECURITY UPDATE: To support privilege dropping to 'nobody' (UID 65534),
+    # the script must be readable and executable by others (0o755), since
+    # it executes in the dropped context of the sandbox child.
+    os.chmod(agent_script_path, 0o755)
     print(f"[HARNESS] Dummy agent written to: {agent_script_path}")
 
 
@@ -748,6 +747,7 @@ def restrict_child() -> None:
       - reboot()
       - ptrace() (stops subprocesses debugging other processes or escaping)
       - syslog() (stops accessing system logs)
+    Also applies memory/CPU limits and de-escalates privileges to 'nobody'.
     """
     try:
         # Load local standard C library
@@ -756,10 +756,17 @@ def restrict_child() -> None:
         # 1. Enable PR_SET_NO_NEW_PRIVS to allow loading seccomp without root inside child
         PR_SET_NO_NEW_PRIVS = 38
         if libc.prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0:
-            print("[HARNESS][CHILD] Failed to set PR_SET_NO_NEW_PRIVS")
+            sys.stderr.write("[HARNESS][CHILD] Failed to set PR_SET_NO_NEW_PRIVS\n")
             sys.exit(1)
 
-        # 2. Determine syscall numbers based on architecture
+        # 2. Enforce CPU and Memory Resource Limits (prevents Denial of Service)
+        # 256 MB virtual memory ceiling
+        MEM_LIMIT = 256 * 1024 * 1024
+        resource.setrlimit(resource.RLIMIT_AS, (MEM_LIMIT, MEM_LIMIT))
+        # 5 seconds of CPU execution time limit
+        resource.setrlimit(resource.RLIMIT_CPU, (5, 5))
+
+        # 3. Determine syscall numbers based on architecture
         machine = os.uname().machine
         if "arm" in machine or "aarch64" in machine:
             sys_reboot = 142
@@ -786,11 +793,16 @@ def restrict_child() -> None:
         PR_SET_SECCOMP = 22
         SECCOMP_MODE_FILTER = 2
         if libc.prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, ctypes.byref(prog)) != 0:
-            print("[HARNESS][CHILD] Failed to load seccomp filter")
+            sys.stderr.write("[HARNESS][CHILD] Failed to load seccomp filter\n")
             sys.exit(1)
+
+        # 4. Drop child process privileges to unprivileged 'nobody' user (UID 65534)
+        # Drop group ID first, then user ID to completely de-escalate privilege
+        os.setgid(65534)
+        os.setuid(65534)
             
     except Exception as e:
-        print(f"[HARNESS][CHILD] Error applying seccomp restriction: {e}")
+        sys.stderr.write(f"[HARNESS][CHILD] Error applying restrictions: {e}\n")
         sys.exit(1)
 
 
@@ -843,12 +855,14 @@ def main() -> int:
         # We use tempfile.mkdtemp() for an isolated, uniquely-named directory.
         # All temporary files live here so we can clean up atomically.
         tmp_dir = tempfile.mkdtemp(prefix="taxagent_sandbox_")
+        os.chmod(tmp_dir, 0o755)  # Let 'nobody' access files within
         agent_script_path = os.path.join(tmp_dir, "dummy_agent.py")
         test_file_path    = os.path.join(tmp_dir, "test.txt")
 
         # Create the test file that the dummy agent will try to read.
         with open(test_file_path, "w") as fh:
             fh.write("Hello from the kernel-monitored sandbox!\n")
+        os.chmod(test_file_path, 0o644)  # Let 'nobody' read the file
         print(f"[HARNESS] Test file created at: {test_file_path}")
 
         # Write the dummy agent script.
