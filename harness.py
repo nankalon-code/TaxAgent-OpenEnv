@@ -909,11 +909,25 @@ def main() -> int:
         #
         # stdout/stderr are inherited so the agent's print() calls appear
         # directly in the terminal alongside harness output.
+        # Sanitize child environment to prevent host variable/credential leakage
+        clean_env = {
+            "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+            "PYTHONPATH": os.environ.get("PYTHONPATH", ""),
+            "LANG": os.environ.get("LANG", "en_US.UTF-8"),
+        }
+
+        # We use sys.executable to ensure we invoke the same Python interpreter
+        # that is running this harness, avoiding version mismatches.
+        #
+        # stdout/stderr are inherited so the agent's print() calls appear
+        # directly in the terminal alongside harness output.
         print(f"\n[HARNESS] Spawning dummy agent: {agent_script_path}")
         agent_proc = subprocess.Popen(
             cmd,
             stdout=sys.stdout,
             stderr=sys.stderr,
+            env=clean_env,             # Enforce host environment sanitization
+            close_fds=True,            # Prevent file descriptor leakage from parent
             preexec_fn=restrict_child  # Set seccomp filter in child context before exec
         )
         agent_pid = agent_proc.pid
