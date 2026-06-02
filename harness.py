@@ -267,8 +267,22 @@ def write_dummy_agent(agent_script_path: str, target_file_path: str) -> None:
             print("[AGENT] Permission denied — kernel sandbox is working!")
 
         # Sleep so the perf ring buffer has time to deliver the event
-        # to the userspace harness before the process exits.
-        time.sleep(2)
+        time.sleep(1)
+
+        # ── Seccomp test ─────────────────────────────────────────────────────
+        print("[AGENT] Testing Seccomp: Attempting to call ptrace (restricted syscall)...")
+        try:
+            import ctypes
+            libc = ctypes.CDLL(None)
+            import os
+            machine = os.uname().machine
+            syscall_num = 117 if ("arm" in machine or "aarch64" in machine) else 101
+            # If seccomp works, this next line will trigger SIGSYS and kill the process.
+            libc.syscall(syscall_num, 0, 0, 0, 0)
+            print("[AGENT] Error: ptrace succeeded! Seccomp filter failed.")
+        except Exception as e:
+            print(f"[AGENT] Exception while calling ptrace: {e}")
+
         print("[AGENT] Done.")
     """)
 
@@ -698,6 +712,89 @@ def run_http_server():
 
 
 # ==============================================================================
+#  SECCOMP SYSTEM ISOLATION
+# ==============================================================================
+
+# BPF assembly instructions and constants for filtering syscalls
+BPF_LD  = 0x00
+BPF_W   = 0x00
+BPF_ABS = 0x20
+BPF_JMP = 0x05
+BPF_JEQ = 0x15
+BPF_RET = 0x06
+BPF_K   = 0x00
+
+SECCOMP_RET_KILL_PROCESS = 0x80000000
+SECCOMP_RET_ALLOW        = 0x7fff0000
+
+class SockFilter(ctypes.Structure):
+    _fields_ = [
+        ("code", ctypes.c_uint16),
+        ("jt", ctypes.c_uint8),
+        ("jf", ctypes.c_uint8),
+        ("k", ctypes.c_uint32),
+    ]
+
+class SockFprog(ctypes.Structure):
+    _fields_ = [
+        ("len", ctypes.c_uint16),
+        ("filter", ctypes.POINTER(SockFilter)),
+    ]
+
+def restrict_child() -> None:
+    """
+    Enforce dual-layer seccomp filtering on the child process before execution.
+    We drop privileges and forbid dangerous administrative syscalls:
+      - reboot()
+      - ptrace() (stops subprocesses debugging other processes or escaping)
+      - syslog() (stops accessing system logs)
+    """
+    try:
+        # Load local standard C library
+        libc = ctypes.CDLL(None)
+
+        # 1. Enable PR_SET_NO_NEW_PRIVS to allow loading seccomp without root inside child
+        PR_SET_NO_NEW_PRIVS = 38
+        if libc.prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0:
+            print("[HARNESS][CHILD] Failed to set PR_SET_NO_NEW_PRIVS")
+            sys.exit(1)
+
+        # 2. Determine syscall numbers based on architecture
+        machine = os.uname().machine
+        if "arm" in machine or "aarch64" in machine:
+            sys_reboot = 142
+            sys_ptrace = 117
+            sys_syslog = 116
+        else:
+            sys_reboot = 169
+            sys_ptrace = 101
+            sys_syslog = 103
+
+        # BPF filters block reboot, ptrace, and syslog
+        filter_insts = [
+            SockFilter(BPF_LD | BPF_W | BPF_ABS, 0, 0, 0),                       # Load syscall nr
+            SockFilter(BPF_JMP | BPF_JEQ | BPF_K, 4, 0, sys_reboot),             # If reboot, jump to KILL
+            SockFilter(BPF_JMP | BPF_JEQ | BPF_K, 3, 0, sys_ptrace),             # If ptrace, jump to KILL
+            SockFilter(BPF_JMP | BPF_JEQ | BPF_K, 2, 0, sys_syslog),             # If syslog, jump to KILL
+            SockFilter(BPF_RET | BPF_K, 0, 0, SECCOMP_RET_ALLOW),                # Otherwise ALLOW
+            SockFilter(BPF_RET | BPF_K, 0, 0, SECCOMP_RET_KILL_PROCESS),         # KILL target
+        ]
+
+        insts_array = (SockFilter * len(filter_insts))(*filter_insts)
+        prog = SockFprog(len(filter_insts), insts_array)
+
+        PR_SET_SECCOMP = 22
+        SECCOMP_MODE_FILTER = 2
+        if libc.prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, ctypes.byref(prog)) != 0:
+            print("[HARNESS][CHILD] Failed to load seccomp filter")
+            sys.exit(1)
+            
+    except Exception as e:
+        print(f"[HARNESS][CHILD] Error applying seccomp restriction: {e}")
+        sys.exit(1)
+
+
+# ==============================================================================
 #  MAIN ORCHESTRATION
 # ==============================================================================
 
@@ -779,6 +876,20 @@ def main() -> int:
 
         # ── Step 5: Spawn the dummy agent subprocess ─────────────────────────
         #
+        # Con #6 Fix: Network Namespace containment via 'unshare -n'
+        # Check if unshare command works or is available
+        use_netns = True
+        try:
+            subprocess.run(["unshare", "--version"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except (FileNotFoundError, OSError):
+            use_netns = False
+            print("[HARNESS][WARN] 'unshare' utility not found. Network Namespace isolation disabled.")
+
+        cmd = [sys.executable, agent_script_path]
+        if use_netns:
+            print("[HARNESS] Network Namespace containment active. Synergizing loopback-only environment.")
+            cmd = ["unshare", "-n"] + cmd
+
         # We use sys.executable to ensure we invoke the same Python interpreter
         # that is running this harness, avoiding version mismatches.
         #
@@ -786,9 +897,10 @@ def main() -> int:
         # directly in the terminal alongside harness output.
         print(f"\n[HARNESS] Spawning dummy agent: {agent_script_path}")
         agent_proc = subprocess.Popen(
-            [sys.executable, agent_script_path],
+            cmd,
             stdout=sys.stdout,
             stderr=sys.stderr,
+            preexec_fn=restrict_child  # Set seccomp filter in child context before exec
         )
         agent_pid = agent_proc.pid
         print(f"[HARNESS] Agent spawned with PID: {agent_pid}")
